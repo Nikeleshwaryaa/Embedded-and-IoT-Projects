@@ -1,0 +1,122 @@
+#include "esp_camera.h"
+#include <SD_MMC.h>
+
+// GPIO Pins
+#define PIR_PIN 13     // PIR Sensor
+#define BUZZER_PIN 12  // Buzzer
+
+// Camera Configuration (Optimized for stability)
+#define CAMERA_MODEL_AI_THINKER
+camera_config_t config;
+
+void setupCamera() {
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_pwdn = 32;
+  config.pin_reset = -1;
+  config.pin_xclk = 0;
+  config.pin_sscb_sda = 26;
+  config.pin_sscb_scl = 27;
+  config.pin_d7 = 35;
+  config.pin_d6 = 34;
+  config.pin_d5 = 39;
+  config.pin_d4 = 36;
+  config.pin_d3 = 21;
+  config.pin_d2 = 19;
+  config.pin_d1 = 18;
+  config.pin_d0 = 5;
+  config.pin_vsync = 25;
+  config.pin_href = 23;
+  config.pin_pclk = 22;
+  config.xclk_freq_hz = 10000000; // Reduced clock speed
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size = FRAMESIZE_QVGA; // Lower resolution
+  config.jpeg_quality = 15; // Higher quality=15, lower number=better quality
+  config.fb_count = 1;
+
+  // Initialize camera with error handling
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Camera init failed: 0x%x", err);
+    if(err == 0x105) Serial.println(" - Check camera module connection");
+    while(1) { // Blink LED if camera fails
+      digitalWrite(BUZZER_PIN, HIGH);
+      delay(100);
+      digitalWrite(BUZZER_PIN, LOW);
+      delay(1000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PIR_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW); // Ensure buzzer off
+
+  // Initialize SD Card with retries
+  int sdAttempts = 0;
+  while(!SD_MMC.begin("/sdcard", true)) { // 1-bit mode for better stability
+    Serial.println("SD Card Mount Failed - Retrying...");
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(100);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(900);
+    if(sdAttempts++ > 10) {
+      Serial.println("SD Card initialization failed permanently");
+      while(1); // Halt on failure
+    }
+  }
+  Serial.println("SD Card initialized");
+
+  setupCamera();
+  Serial.println("System Ready");
+}
+
+void loop() {
+  static unsigned long lastTrigger = 0;
+  const unsigned long cooldown = 5000; // 5 seconds
+
+  if(digitalRead(PIR_PIN) == HIGH && (millis() - lastTrigger) > cooldown) {
+    lastTrigger = millis();
+    Serial.println("Intruder detected!");
+    
+    // Alert sequence
+    for(int i=0; i<3; i++) {
+      digitalWrite(BUZZER_PIN, HIGH);
+      delay(100);
+      digitalWrite(BUZZER_PIN, LOW);
+      delay(100);
+    }
+
+    // Capture photo with error handling
+    camera_fb_t *fb = NULL;
+    for(int attempt=0; attempt<3; attempt++) {
+      fb = esp_camera_fb_get();
+      if(fb) break;
+      Serial.println("Camera capture failed - Retrying...");
+      delay(100);
+    }
+
+    if(fb) {
+      // Save to SD Card
+      String path = "/intruder_" + String(millis()) + ".jpg";
+      File file = SD_MMC.open(path.c_str(), FILE_WRITE);
+      
+      if(file) {
+        if(file.write(fb->buf, fb->len) == fb->len) {
+          Serial.printf("Saved: %s (%d bytes)\n", path.c_str(), fb->len);
+        } else {
+          Serial.println("Write incomplete");
+        }
+        file.close();
+      } else {
+        Serial.println("Failed to open file");
+      }
+      
+      esp_camera_fb_return(fb);
+    } else {
+      Serial.println("Camera capture failed after 3 attempts");
+    }
+  }
+}
