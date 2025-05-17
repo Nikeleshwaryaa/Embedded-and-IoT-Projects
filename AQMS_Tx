@@ -1,0 +1,51 @@
+#include <SPI.h>
+#include <LoRa.h>
+
+// LoRa Pins
+#define SCK 18
+#define MISO 19
+#define MOSI 23
+#define SS 5
+#define RST 14
+#define DIO0 2
+
+// Sensor Pins (Example - Modify according to your setup)
+#define LPG_SENSOR_PIN 34
+#define CO2_DIGITAL_PIN 13
+
+void setup() {
+    Serial.begin(115200);
+    while (!Serial);
+    Serial.println("LoRa Transmitter Starting...");
+
+    // Initialize LoRa
+    SPI.begin(SCK, MISO, MOSI, SS);
+    LoRa.setPins(SS, RST, DIO0);
+    
+    if (!LoRa.begin(433E6)) {
+        Serial.println("LoRa Initialization Failed!");
+        while (1);
+    }
+    
+    LoRa.setSpreadingFactor(12);  // Match receiver settings
+    Serial.println("LoRa Transmitter Ready!");
+}
+
+void loop() {
+    // Read sensor values (Example implementation)
+    int lpg_ppm = analogRead(LPG_SENSOR_PIN);
+    int co2_detected = digitalRead(CO2_DIGITAL_PIN);
+
+    // Create data packet
+    String data = String(lpg_ppm) + "," + String(co2_detected);
+    
+    // Send packet
+    LoRa.beginPacket();
+    LoRa.print(data);
+    LoRa.endPacket();
+
+    Serial.print("Sent: ");
+    Serial.println(data);
+    
+    delay(5000);  // Send data every 5 seconds
+}
