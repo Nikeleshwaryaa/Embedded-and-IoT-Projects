@@ -1,0 +1,105 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <SPI.h>
+#include <LoRa.h>
+
+// LoRa Pins
+#define SCK 18
+#define MISO 19
+#define MOSI 23
+#define SS 5
+#define RST 14
+#define DIO0 2
+
+// WiFi Credentials
+const char* ssid = "POCO X4 Pro 5G";
+const char* password = "USMANNASIMA786";
+
+// ThingSpeak Configuration
+const char* server = "http://api.thingspeak.com/update";
+const char* apiKey = "10ACGYV7UTZ3OMXI";
+
+void setup() {
+    Serial.begin(115200);
+    while (!Serial);
+    Serial.println("LoRa Receiver & ThingSpeak Starting...");
+
+    // Connect to WiFi
+    WiFi.begin(ssid, password);
+    Serial.print("Connecting to WiFi...");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.print(".");
+    }
+    Serial.println("\nConnected to WiFi!");
+
+    // Initialize LoRa
+    SPI.begin(SCK, MISO, MOSI, SS);
+    LoRa.setPins(SS, RST, DIO0);
+    
+    if (!LoRa.begin(433E6)) {
+        Serial.println("LoRa Initialization Failed!");
+        while (1);
+    }
+    
+    LoRa.setSpreadingFactor(12);
+    Serial.println("LoRa Receiver Ready!");
+}
+
+void loop() {
+    int packetSize = LoRa.parsePacket();
+    if (packetSize) {
+        String receivedData;
+        while (LoRa.available()) {
+            receivedData += (char)LoRa.read();
+        }
+        
+        Serial.print("Received: ");
+        Serial.println(receivedData);
+
+        // Parse data
+        int commaIndex = receivedData.indexOf(',');
+        if (commaIndex != -1) {
+            String lpg = receivedData.substring(0, commaIndex);
+            String co2 = receivedData.substring(commaIndex + 1);
+            
+            // Validate numerical data
+            if (isValidNumber(lpg) && isValidNumber(co2)) {
+                sendToThingSpeak(lpg, co2);
+            } else {
+                Serial.println("Invalid sensor data received");
+            }
+        }
+    }
+}
+
+bool isValidNumber(String str) {
+    for (byte i = 0; i < str.length(); i++) {
+        if (!isDigit(str.charAt(i))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void sendToThingSpeak(String lpg, String co2) {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi Disconnected!");
+        return;
+    }
+
+    HTTPClient http;
+    String url = String(server) + "?api_key=" + apiKey + 
+               "&field1=" + lpg + "&field2=" + co2;
+
+    http.begin(url);
+    int httpCode = http.GET();
+    
+    if (httpCode > 0) {
+        Serial.printf("Data sent to ThingSpeak (HTTP: %d)\n", httpCode);
+    } else {
+        Serial.printf("HTTP Error: %d\n", httpCode);
+    }
+    
+    http.end();
+}
